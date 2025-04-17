@@ -1,10 +1,6 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
-from pydantic import field_validator
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
 
 
@@ -16,11 +12,25 @@ load_dotenv(
 class Settings(BaseSettings):
     DB_HOST: str
     DB_PORT: int
-    DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
     SECRET_KEY: str
     ALGORITHM: str = "HS256"  # Добавляем значение по умолчанию
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
+    API_KEY: str
+    FOLDER_ID: str
+    ADMIN_MAIL: str
+    MAIL_PORT: int
+
+    @property
+    def DATABASE_URL(self) -> str:
+        return f"mysql://{self.DB_NAME}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}"
+
+    @property
+    def ASYNC_DATABASE_URL(self) -> str:
+        return f"mysql+asyncmy://{self.DB_NAME}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}"
+
+
 #extra - игнорирование других переменных
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -30,14 +40,9 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-def get_db_url():
-    return (
-        f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}@"
-        f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
-    )
-
 def get_auth_data():
-    return {
-        "secret_key": settings.SECRET_KEY,
-        "algorithm": settings.ALGORITHM
-    }
+    return {'secret_key': settings.SECRET_KEY, 'algorithm': settings.ALGORITHM}
+
+def get_admin_mail():
+    pass
+

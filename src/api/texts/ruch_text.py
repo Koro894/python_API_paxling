@@ -1,26 +1,28 @@
-from fastapi import APIRouter
-from src.api.dependences import SessionDep_Text_in_Read
-from src.database import passwod_engine,text_in_read_engine, history_read_engine,  grammar_read_engine, Base, Base_History_Rear, Base_Grammar_Rear, Base_Text_Rear
-from src.api.modals.inst_class import PasswodMod_TextRead
-from src.api.schemas.shablon import BookText, BookID
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.future import select
+
+from src.api.db.dependences import SessionDep_Text_in_Read
+from src.api.db.database import *
+
+from src.api.modals.inst_class import PasswodMod_TextRead, PasswodModel
+from src.api.modals.shablon import BookText, BookID, Perevod
+from sqlalchemy import Column, DateTime, func
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
 
 
 
-limiter = Limiter(key_func=get_remote_address)
+
+from src.yandex_translate.translat import perevod_word
 
 router = APIRouter(
     prefix="/text",
     tags=["Добавление и получение большого текста"]
 )
 
-router.state.limiter = limiter
-router.add_exception_handler(429, _rate_limit_exceeded_handler)
 
 @router.post("/setup_database", summary="Загрузка баз данных")
-#Ограничение взаимодействия с этим методом до 5 раз в минуту
-@limiter.limit("5/minute")
 async def setup_database():
     async with passwod_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -34,18 +36,67 @@ async def setup_database():
     async with grammar_read_engine.begin() as conn_grammar_read:
         await conn_grammar_read.run_sync(Base_Grammar_Rear.metadata.create_all)
 
-    return {'ok' : True}
+    return {'ok': True}
+
 
 @router.post("/text_setup", response_model=BookID, summary="Добавление текста")
 async def add_text(data: BookText, session: SessionDep_Text_in_Read):
-    new_text = PasswodMod_TextRead(**data.model_dump())
-    session.add(new_text)
-    await session.commit()
-    await session.refresh(new_text)
+    try:
+
+        result = await session.execute(
+            select(PasswodMod_TextRead).where(PasswodMod_TextRead.title_text == data.title_text)
+        )
+        except_text = result.scalars().first()
+
+        if except_text:
+            raise HTTPException(status_code=404, detail="Текст с таким содержимым уже существует")
+
+        new_text = PasswodMod_TextRead(**data.model_dump())
+
+        # Добавляет created_at с текущим временем, если его нет в BookText
+        if not hasattr(new_text, 'created_at'):
+            new_text.created_at = datetime.utcnow()
+
+        if hasattr(new_text, 'en_text'):
+            new_text.en_text = perevod_word([new_text.before_text], "en")
 
 
-@router.get("text_get/{user_id}", summary="")
-async def text_get(user_id: int, session: SessionDep_Text_in_Read):
-    pass
+
+        session.add(new_text)
+        await session.commit()
+        await session.refresh(new_text)
+
+        return BookID(id=new_text.id)
+    except Exception as e:
+        #.rollback() отменяет все действия
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/text_get_title", summary="Получение всех названий текстов для чтения")
+async def read_users(db: SessionDep_Text_in_Read):
+    text = await db.execute(select(PasswodMod_TextRead.title_text))
+    all_text = text.scalars().all()
+    return all_text
+
+
+@router.get("/text_get_before", summary="Получение всех текстов для чтения")
+async def read_users(db: SessionDep_Text_in_Read):
+    text = await db.execute(select(PasswodMod_TextRead.before_text))
+    all_text = text.scalars().all()
+    return all_text
+
+@router.get("/text_get_en", summary="Получение всех текстов по английски для чтения")
+async def read_users(db: SessionDep_Text_in_Read):
+    text = await db.execute(select(PasswodMod_TextRead.en_text))
+    all_text = text.scalars().all()
+    return all_text
+
+@router.post('/text_translater', summary="Перевод текста")
+async def translate_text(data: Perevod):
+    print(data.dict())  # Логирование входящих данных
+    perevod = perevod_word(data.before_text, data.language)
+    return perevod
+
 
 
